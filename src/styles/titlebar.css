@@ -1,0 +1,195 @@
+.title-bar {
+  height: var(--title-bar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 clamp(12px, 2vw, 20px);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(9, 13, 20, 0.86);
+  backdrop-filter: blur(18px);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 14px 36px rgba(0, 0, 0, 0.22);
+}
+
+body.light-theme .title-bar {
+  background: rgba(251, 255, 253, 0.84);
+  box-shadow: 0 1px 0 rgba(19, 125, 106, 0.12), 0 14px 36px rgba(20, 56, 50, 0.08);
+}
+
+.title-bar .title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.title-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(124, 224, 196, 0.5);
+  animation: pulse-dot 2.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
+.title-handle,
+.title-owner,
+.title-discord {
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 224, 196, 0.22);
+  background: rgba(124, 224, 196, 0.08);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.title-owner {
+  max-width: 28vw;
+  border-color: rgba(126, 184, 245, 0.28);
+  background: rgba(126, 184, 245, 0.1);
+  color: #9ac9ff;
+  text-transform: none;
+}
+
+.title-discord {
+  max-width: 30vw;
+  text-decoration: none;
+  border-color: rgba(124, 224, 196, 0.36);
+  background: linear-gradient(135deg, rgba(124, 224, 196, 0.16), rgba(126, 184, 245, 0.1));
+  color: var(--accent);
+}
+
+.title-discord:hover {
+  border-color: rgba(124, 224, 196, 0.58);
+  background: rgba(124, 224, 196, 0.16);
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.window-controls button,
+.lang-toggle-btn,
+.theme-toggle-btn {
+  min-width: 36px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.window-controls button:hover,
+.lang-toggle-btn:hover,
+.theme-toggle-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124, 224, 196, 0.34);
+  background: rgba(124, 224, 196, 0.1);
+  color: var(--accent);
+}
+
+.theme-toggle-btn {
+  width: 36px;
+  padding: 0;
+}
+
+.theme-toggle-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lang-toggle-btn {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.watermark {
+  position: fixed;
+  right: 16px;
+  bottom: 12px;
+  z-index: 1100;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 7px 10px;
+  border: 1px solid rgba(124, 224, 196, 0.22);
+  border-radius: 10px;
+  background: rgba(9, 13, 20, 0.72);
+  color: rgba(237, 247, 244, 0.82);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+}
+
+.watermark a {
+  color: var(--accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.watermark a:hover {
+  text-decoration: underline;
+}
+
+body.light-theme .watermark {
+  background: rgba(251, 255, 253, 0.78);
+  color: rgba(18, 32, 31, 0.8);
+  box-shadow: 0 10px 30px rgba(20, 56, 50, 0.12);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124, 224, 196, 0.42), 0 0 14px rgba(124, 224, 196, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(124, 224, 196, 0), 0 0 24px rgba(124, 224, 196, 0.82); }
+}
+
+@media (max-width: 560px) {
+  .title-handle {
+    display: none;
+  }
+
+  .title-owner {
+    max-width: 22vw;
+  }
+
+  .title-discord {
+    display: none;
+  }
+
+  .lang-toggle-btn {
+    padding-inline: 8px;
+  }
+
+  .watermark {
+    right: 10px;
+    bottom: 10px;
+    font-size: 10px;
+    gap: 8px;
+  }
+}

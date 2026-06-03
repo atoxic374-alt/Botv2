@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Bot-Studio | Ahmed (4_3a)</title>
+  <link rel="stylesheet" href="src/styles/layout.css">
+  <link rel="stylesheet" href="src/styles/titlebar.css">
+  <link rel="stylesheet" href="src/styles/components.css">
+  <link rel="stylesheet" href="src/styles/truestudio.css">
+</head>
+<body>
+  <div class="studio-backdrop" aria-hidden="true">
+    <div class="studio-grid"></div>
+    <div class="studio-scanline"></div>
+    <div class="studio-particles">
+      <span style="--x:8%;--d:13s;--s:2px"></span>
+      <span style="--x:18%;--d:18s;--s:3px"></span>
+      <span style="--x:29%;--d:15s;--s:2px"></span>
+      <span style="--x:41%;--d:21s;--s:4px"></span>
+      <span style="--x:53%;--d:17s;--s:2px"></span>
+      <span style="--x:64%;--d:19s;--s:3px"></span>
+      <span style="--x:76%;--d:14s;--s:2px"></span>
+      <span style="--x:88%;--d:22s;--s:4px"></span>
+    </div>
+  </div>
+
+  <div class="app-container bot-studio-only">
+    <header class="title-bar">
+      <div class="title">
+        <span class="title-dot"></span>
+        <span>Bot-Studio</span>
+        <span class="title-owner">Ahmed (4_3a)</span>
+        <a class="title-discord" href="https://discord.gg/ens" target="_blank" rel="noopener">discord.gg/ens</a>
+      </div>
+      <div class="window-controls">
+        <button class="lang-toggle-btn" id="langToggleBtn" data-i18n-title="app.lang" title="Language">English</button>
+        <button class="theme-toggle-btn" id="themeToggleBtn" data-i18n-title="app.theme" title="Toggle theme" aria-label="Toggle theme">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="studio-main">
+      <section class="page-container active" id="ts-page" aria-label="Bot-Studio"></section>
+    </main>
+  </div>
+
+  <div class="watermark">
+    <span>Ahmed (4_3a)</span>
+    <a href="https://discord.gg/ens" target="_blank" rel="noopener">discord.gg/ens</a>
+  </div>
+
+  <script src="src/api.js"></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

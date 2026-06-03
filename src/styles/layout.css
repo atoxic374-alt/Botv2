@@ -1,0 +1,185 @@
+:root {
+  --bg-primary: #090d14;
+  --bg-secondary: #101722;
+  --bg-tertiary: #162130;
+  --accent: #7ce0c4;
+  --accent-hover: #5fc9ad;
+  --text: #edf7f4;
+  --text-secondary: #92a8ad;
+  --danger: #ff5a6e;
+  --warning: #f0b232;
+  --success: #7ce0c4;
+  --info: #7eb8f5;
+  --title-bar-height: 42px;
+  --transition-speed: 0.28s;
+  --transition-smooth: cubic-bezier(0.22, 0.8, 0.28, 1);
+  --border-subtle: rgba(124, 224, 196, 0.12);
+  --shadow-card: 0 18px 60px rgba(0, 0, 0, 0.42);
+}
+
+body.light-theme {
+  --bg-primary: #eef4f2;
+  --bg-secondary: #fbfffd;
+  --bg-tertiary: #e2efeb;
+  --accent: #137d6a;
+  --accent-hover: #0f6858;
+  --text: #12201f;
+  --text-secondary: #506a68;
+  --border-subtle: rgba(19, 125, 106, 0.16);
+  --shadow-card: 0 14px 40px rgba(20, 56, 50, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Cairo", "Tajawal", "Segoe UI", sans-serif;
+  background: var(--bg-primary);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  line-height: 1.5;
+  transition: background 0.35s ease, color 0.35s ease;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+body::selection {
+  background: rgba(124, 224, 196, 0.24);
+}
+
+.app-container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-height: 100vh;
+}
+
+.studio-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    linear-gradient(120deg, rgba(124, 224, 196, 0.08), transparent 28%),
+    linear-gradient(240deg, rgba(126, 184, 245, 0.08), transparent 32%),
+    var(--bg-primary);
+}
+
+.studio-grid {
+  position: absolute;
+  inset: -2px;
+  background-image:
+    linear-gradient(rgba(124, 224, 196, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 224, 196, 0.07) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), transparent 86%);
+  animation: studio-grid-drift 18s linear infinite;
+}
+
+.studio-scanline {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent, rgba(124, 224, 196, 0.08), transparent);
+  height: 28%;
+  transform: translateY(-100%);
+  animation: studio-scan 7s ease-in-out infinite;
+}
+
+.studio-particles span {
+  position: absolute;
+  bottom: -16px;
+  left: var(--x);
+  width: var(--s);
+  height: var(--s);
+  border-radius: 999px;
+  background: rgba(124, 224, 196, 0.7);
+  box-shadow: 0 0 18px rgba(124, 224, 196, 0.8);
+  animation: studio-particle-rise var(--d) linear infinite;
+}
+
+.studio-main {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-container {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(12px, 2vw, 22px);
+  padding-bottom: clamp(72px, 10vh, 118px);
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity var(--transition-speed) var(--transition-smooth),
+              transform var(--transition-speed) var(--transition-smooth);
+}
+
+.page-container.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reload-banner {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  border: 1px solid rgba(124, 224, 196, 0.3);
+  border-radius: 999px;
+  background: rgba(13, 17, 28, 0.92);
+  color: var(--text);
+  padding: 10px 16px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.38);
+}
+
+@keyframes studio-grid-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(54px, 54px, 0); }
+}
+
+@keyframes studio-scan {
+  0%, 18% { transform: translateY(-100%); opacity: 0; }
+  35%, 70% { opacity: 1; }
+  100% { transform: translateY(360%); opacity: 0; }
+}
+
+@keyframes studio-particle-rise {
+  from { transform: translateY(0) scale(1); opacity: 0; }
+  12% { opacity: 0.8; }
+  80% { opacity: 0.7; }
+  to { transform: translateY(-105vh) scale(0.5); opacity: 0; }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --title-bar-height: 46px;
+  }
+
+  .page-container {
+    padding-inline: 10px;
+  }
+}
