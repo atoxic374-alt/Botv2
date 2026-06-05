@@ -2677,7 +2677,6 @@ const ts = require('./lib/trueStudio');
           const batchDurationMs = Date.now() - batchStartedAt;
 
           // Process results sequentially — JS is single-threaded here so no races
-          let batchHad401 = false;
           let batchRateLimitHandled = false;
           for (let k = 0; k < results.length; k++) {
             const result = results[k];
@@ -2710,40 +2709,79 @@ const ts = require('./lib/trueStudio');
               const msg = err?.message || String(err);
               s.failed += 1;
               tsLog('error', 'فشل ' + slot.name + ': ' + msg);
-              if (err?.status === 401 || /Unauthorized/i.test(msg)) {
-                tsClearToken(currentEmail);
-                tsLog('error', 'تم إلغاء التوكن من Discord — توقف الجلسة. الحساب قد يكون مُعلَّقاً.');
-                batchHad401 = true;
-              }
 
-              // ── Per-bot timeout: do a FULL session restart then retry once ───
-              // "Refresh portal" is not enough — if the session hung it means the
-              // client state is stale. We re-login, get a fresh client, and reload
-              // the portal from scratch. Bot counter is safe because d.tsLastNumber
-              // was already written to disk before this batch started.
-              if (err?.code === 'OP_TIMEOUT') {
+              // ── Classify the error ───────────────────────────────────────────
+              // Hard block (60003): Discord blocks the specific operation without
+              // a solvable MFA ticket — different from a real token-revoke 401.
+              const _isHardBlock = err?.code === 60003 || err?.data?.code === 60003 ||
+                                   /two.factor.is.required/i.test(msg);
+              // Real 401: Discord revoked the session token entirely.
+              const _isTokenRevoked = !_isHardBlock &&
+                                      (err?.status === 401 || /Unauthorized/i.test(msg));
+              const _isCritical  = _isHardBlock || _isTokenRevoked;
+              const _isRateLimit = isRateLimitedError(err);
+              const _isTimeout   = err?.code === 'OP_TIMEOUT';
+
+              // ── Shared helper: switch account (or restart session) then retry ─
+              // Returns true when the retry succeeded, false otherwise.
+              const _switchAndRetry = async (reason) => {
+                const switched = await switchToNextAccount();
+                if (!switched) {
+                  // No available account — restart session on same account
+                  tsLog('warn', `لا يوجد حساب بديل (${reason}) — إعادة تشغيل الجلسة على ${currentEmail}…`);
+                  await tsSleep(20_000);
+                  try {
+                    const _rc = accountPool.find(a => (a.email || '').toLowerCase() === currentEmail) || creds;
+                    const _fx = await buildAccountCtx(_rc);
+                    token = _fx.token; client = _fx.client; mfaToken = _fx.mfaToken;
+                    netOpts = _fx.netOpts; rateLimiter = _fx.rateLimiter;
+                    tsLog('success', `✓ جلسة جديدة على ${currentEmail}`);
+                  } catch (_re) {
+                    tsLog('error', 'فشل إعادة الجلسة: ' + (_re?.message || _re));
+                    return false;
+                  }
+                }
+                try {
+                  const _rs = Date.now();
+                  const { appPayload: rApp, botToken: rTok } = await createOneBotAsync(
+                    slot.botIndex, slot.num, slot.name, teamIdSnapshot
+                  );
+                  const rDurMs = Date.now() - _rs;
+                  s.bots.push({ name: slot.name, appId: rApp.id, botUserId: rApp.bot?.id || null, token: rTok });
+                  s.done += 1; s.failed -= 1;
+                  if (rules.linkBots && teamId) teamAppCounts[teamId] = (teamAppCounts[teamId] || 0) + 1;
+                  tsLog('success', `تم (${reason}/${currentEmail}): ${slot.name} ⚡ ${(rDurMs/1000).toFixed(1)}s`, { durationMs: rDurMs, appId: rApp.id, botName: slot.name });
+                  try {
+                    const tkList = await botTokensStore.get() || [];
+                    const tkFiltered = tkList.filter(t => t.appId !== rApp.id);
+                    tkFiltered.unshift({
+                      appId: rApp.id, name: slot.name, icon: rApp.icon || null,
+                      token: rTok, email: currentEmail || '',
+                      resetAt: Date.now(), createdAt: Date.now(),
+                    });
+                    await botTokensStore.set(tkFiltered);
+                  } catch (_) {}
+                  pushTsEvent('ts_bot_created', { bot: { name: slot.name, appId: rApp.id, hasToken: true, durationMs: rDurMs, isRetry: true } });
+                  return true;
+                } catch (re) {
+                  tsLog('error', `فشل retry ${slot.name} (${reason}): ` + (re?.message || re));
+                  return false;
+                }
+              };
+
+              // ── 1) Timeout: restart full session, then retry ─────────────────
+              if (_isTimeout) {
                 tsLog('warn', `⏱ ${slot.name}: تجاوز ${Math.round(BOT_CREATION_TIMEOUT_MS / 1000)}s — إعادة تشغيل الجلسة كاملاً…`);
                 try {
-                  // Build a completely fresh context for the current account
-                  // (fresh login → fresh token → fresh warmed client → fresh portal).
                   const _restartCreds = accountPool.find(
                     a => (a.email || '').toLowerCase() === currentEmail
                   ) || creds;
-
                   tsLog('info', `🔄 إعادة تسجيل الدخول بـ ${currentEmail}…`);
                   const _freshCtx = await buildAccountCtx(_restartCreds);
-
-                  // Commit fresh context into the outer-scope variables
-                  token        = _freshCtx.token;
-                  client       = _freshCtx.client;
-                  mfaToken     = _freshCtx.mfaToken;
-                  netOpts      = _freshCtx.netOpts;
-                  rateLimiter  = _freshCtx.rateLimiter;
-                  // currentEmail stays the same (same account, fresh session)
-
-                  tsLog('success', `✓ الجلسة أُعيدت بنجاح — إعادة إنشاء ${slot.name}…`);
-
-                  // Retry the bot with the brand-new session
+                  token = _freshCtx.token; client = _freshCtx.client;
+                  mfaToken = _freshCtx.mfaToken; netOpts = _freshCtx.netOpts;
+                  rateLimiter = _freshCtx.rateLimiter;
+                  tsLog('success', `✓ الجلسة أُعيدت — إعادة إنشاء ${slot.name}…`);
                   const _tStart = Date.now();
                   const { appPayload: tApp, botToken: tTok } = await createOneBotAsync(
                     slot.botIndex, slot.num, slot.name, teamIdSnapshot
@@ -2767,47 +2805,47 @@ const ts = require('./lib/trueStudio');
                     bot: { name: slot.name, appId: tApp.id, hasToken: true, durationMs: tDurMs, isRetry: true },
                   });
                 } catch (_te) {
+                  // Session restart failed → escalate: switch to a different account
                   tsLog('error', `فشل بعد إعادة الجلسة لـ ${slot.name}: ` + (_te?.message || _te));
+                  await _switchAndRetry('timeout-switch');
                 }
-              }
 
-              if (isRateLimitedError(err)) {
-                // ── Distinguish Cloudflare block from real Discord 429 ────────
-                // Research (Official Discord docs + discord.food):
-                //   Real Discord 429 → X-RateLimit-Bucket + retry_after always present
-                //   Cloudflare block → neither present, lasts up to 24h, no point waiting
+              // ── 2) Critical (token revoked OR hard block 60003) ──────────────
+              // In BOTH cases we pause the current account and switch immediately.
+              // We never stop the loop — we always try the next account.
+              } else if (_isCritical) {
+                if (_isHardBlock) {
+                  tsLog('warn', `🚫 Hard block (60003/Two-Factor) على ${slot.name} [${currentEmail}] — تبديل فوري للحساب…`);
+                } else {
+                  tsClearToken(currentEmail);
+                  tsLog('warn', `🚫 تم إلغاء التوكن [${currentEmail}] — تبديل فوري للحساب…`);
+                }
+                // Pause this account for 15 minutes so switchToNextAccount skips it
+                accountPaused[currentEmail] = Date.now() + 15 * 60 * 1000;
+                pushTsEvent('ts_progress');
+                await _switchAndRetry(_isHardBlock ? 'hard-block' : 'token-revoked');
+
+              // ── 3) Rate limit / Cloudflare ───────────────────────────────────
+              } else if (_isRateLimit) {
                 const _isCf  = isCloudflareBlock(err);
                 const _rlMs  = _isCf ? 0 : Math.max(retryAfterMs(err), 10_000);
-                const _label = _isCf
+                tsLog('warn', _isCf
                   ? `🚫 Cloudflare block على ${slot.name} [${currentEmail}] — تبديل فوري للحساب`
-                  : `⚠️ Rate limit (429) على ${slot.name} [${currentEmail}] — جاري البحث عن حساب بديل`;
-                tsLog('warn', _label);
+                  : `⚠️ Rate limit (429) على ${slot.name} [${currentEmail}] — جاري البحث عن حساب بديل`);
 
                 let _retryAllowed = true;
-
                 if (!batchRateLimitHandled) {
                   batchRateLimitHandled = true;
-
-                  // Pause current account:
-                  //   Cloudflare → 4 hours (block is long-lived, don't waste it)
-                  //   Discord 429 → actual retry_after + 60s safety
                   accountPaused[currentEmail] = Date.now() + (_isCf ? 4 * 60 * 60 * 1000 : Math.max(_rlMs, 60_000));
-
-                  // Try to switch to another saved TS account
                   const switched = await switchToNextAccount();
-
                   if (switched) {
                     tsLog('info', `✓ جاري الاستمرار من الحساب: ${currentEmail}`);
                   } else if (_isCf) {
-                    // Cloudflare + no other account → don't waste 60s (it won't lift)
-                    tsLog('error', `🚫 Cloudflare block ولا يوجد حساب بديل — تخطّي ${slot.name} وإكمال باقي الطلبات`);
+                    tsLog('error', `🚫 Cloudflare block ولا يوجد حساب بديل — تخطّي ${slot.name}`);
                     _retryAllowed = false;
                   } else {
-                    // Discord 429 + no other account → wait 60s then retry same account
-                    tsLog('warn', `لا يوجد حساب بديل — إيقاف الجلسة 60 ثانية ثم المحاولة من نفس الحساب…`);
-                    s.state = 'waiting';
-                    s.waitUntilTs = Date.now() + 60_000;
-                    s.waitTotalMs = 60_000;
+                    tsLog('warn', `لا يوجد حساب بديل — إيقاف الجلسة 60 ثانية ثم المحاولة…`);
+                    s.state = 'waiting'; s.waitUntilTs = Date.now() + 60_000; s.waitTotalMs = 60_000;
                     pushTsEvent('ts_progress');
                     await tsSleep(60_000);
                     s.state = 'running'; s.waitUntilTs = 0; s.waitTotalMs = 0;
@@ -2815,15 +2853,12 @@ const ts = require('./lib/trueStudio');
                     try {
                       const _rh = await ts.accountHealthProbe({ token, netOpts });
                       if (!_rh.ok) throw new Error(_rh.message);
-                      tsLog('info', 'فحص الحساب بعد الانتظار OK — تحديث Portal ثم الاستئناف');
                       await refreshDeveloperContext('انتهاء انتظار rate limit');
                     } catch (_pe) {
                       tsLog('warn', 'تعذر فحص الحساب بعد الانتظار: ' + (_pe.message || _pe));
                     }
                   }
                 }
-
-                // Retry this bot slot only if allowed (not a Cloudflare dead-end)
                 if (_retryAllowed) {
                   try {
                     const _retryStart = Date.now();
@@ -2848,7 +2883,13 @@ const ts = require('./lib/trueStudio');
                     tsLog('error', `فشل retry ${slot.name} (حتى بعد التبديل): ` + (re?.message || re));
                   }
                 }
+
+              // ── 4) Any other unexpected error → try switching account once ───
+              } else {
+                tsLog('warn', `⚡ خطأ غير متوقع على ${slot.name} — محاولة التبديل للحساب البديل…`);
+                await _switchAndRetry('generic-error');
               }
+
               pushTsEvent('ts_progress');
             }
           }
@@ -2856,7 +2897,6 @@ const ts = require('./lib/trueStudio');
           writeData(d);
           pushTsEvent('ts_progress');
 
-          if (batchHad401) break;
           if (batchDurationMs > LONG_CREATE_REFRESH_MS && !s.pendingCaptcha && !s.cancelRequested) {
             await refreshDeveloperContext(`دفعة الإنشاء أخذت ${Math.ceil(batchDurationMs / 1000)}s`);
           }
