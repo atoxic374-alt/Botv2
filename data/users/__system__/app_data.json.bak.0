@@ -1,1 +1,10 @@
-{}
+{
+  "tsAccounts": [],
+  "tsLastNumber": 0,
+  "tsPfp": {
+    "avatar": null,
+    "banner": null,
+    "updatedAt": 0
+  },
+  "tsCaptcha": {}
+}

@@ -60,6 +60,7 @@ window.electronAPI = {
 
   tsAccounts: () => apiCall('GET', '/api/ts/accounts'),
   tsSaveAccount: (payload) => apiCall('POST', '/api/ts/accounts', payload),
+  tsSaveBulkTokens: (tokens) => apiCall('POST', '/api/ts/accounts/bulk-tokens', { tokens }),
   tsDeleteAccount: (email) => apiCall('DELETE', `/api/ts/accounts/${encodeURIComponent(email)}`),
   tsState: () => apiCall('GET', '/api/ts/state'),
   tsStart: (cfg) => apiCall('POST', '/api/ts/start', cfg),

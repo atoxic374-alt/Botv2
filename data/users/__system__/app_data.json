@@ -6,5 +6,6 @@
     "banner": null,
     "updatedAt": 0
   },
-  "tsCaptcha": {}
+  "tsCaptcha": {},
+  "tsBulkTokenCounter": 0
 }

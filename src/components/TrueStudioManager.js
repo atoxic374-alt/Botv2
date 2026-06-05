@@ -66,6 +66,7 @@ export class TrueStudioManager {
     this._pfpAllRunning = false;      // guard: only one pfp-all at a time
     this._autoIntents = false;        // auto-enable intents when creating new bots
     this.pfp = { avatar: null, banner: null, updatedAt: 0 };
+    this.bulkTokensText = '';         // raw textarea content for bulk token import
   }
 
   async init() {
@@ -453,6 +454,9 @@ export class TrueStudioManager {
             <input type="text" id="ts-totp" class="ts-input totp" value="" placeholder="${sel?.hasTotp ? '•••• •••• •••• ••••' : 'BASE32 SECRET'}" autocomplete="off" />
           </div>
         </div>
+
+        <!-- Bulk token import -->
+        ${this._renderBulkTokenCard()}
 
         <!-- Automation rules -->
         <div class="ts-card">
@@ -859,6 +863,31 @@ export class TrueStudioManager {
           <span class="ts-pool-count">${rows.length} حساب</span>
         </div>
         <div class="ts-pool-rows">${cells}</div>
+      </div>`;
+  }
+
+  _renderBulkTokenCard() {
+    const lines = this.bulkTokensText.split('\n').map(l => l.trim()).filter(l => l.length > 10);
+    const n = lines.length;
+    return `
+      <div class="ts-card">
+        <div class="ts-card-head">
+          <div class="ts-card-title ar">${t('ts.bulk_tokens_title')}</div>
+          ${n > 0 ? `<div class="ts-card-badge" style="background:var(--mint,#7ce0c4);color:#0a0e1a;font-size:11px;padding:2px 9px;border-radius:20px;font-weight:700;">${n}</div>` : ''}
+        </div>
+        <div class="ts-field">
+          <div class="ts-field-hint">${t('ts.bulk_tokens_hint')}</div>
+          <textarea id="ts-bulk-tokens"
+            class="ts-input ltr"
+            style="font-family:monospace;font-size:12px;resize:vertical;min-height:90px;line-height:1.5;"
+            placeholder="${escapeAttr(t('ts.bulk_tokens_ph'))}"
+            autocomplete="off" spellcheck="false">${escapeHtml(this.bulkTokensText)}</textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+          <button class="ts-btn mint" id="ts-bulk-save" ${n === 0 ? 'disabled' : ''}>
+            ${t('ts.bulk_tokens_save')}${n > 0 ? ` (${n})` : ''}
+          </button>
+        </div>
       </div>`;
   }
 
@@ -3546,6 +3575,19 @@ export class TrueStudioManager {
     $('#ts-totp')?.addEventListener('input', (e) => this.form.totpSecret = e.target.value.replace(/\s+/g, ''));
     $('#ts-direct-token')?.addEventListener('input', (e) => this.form.directToken = e.target.value.trim());
 
+    $('#ts-bulk-tokens')?.addEventListener('input', (e) => {
+      this.bulkTokensText = e.target.value;
+      const n = this.bulkTokensText.split('\n').map(l => l.trim()).filter(l => l.length > 10).length;
+      const btn = this.contentArea.querySelector('#ts-bulk-save');
+      if (btn) {
+        btn.disabled = n === 0;
+        btn.textContent = t('ts.bulk_tokens_save') + (n > 0 ? ` (${n})` : '');
+      }
+      const badge = this.contentArea.querySelector('#ts-bulk-badge');
+      if (badge) badge.textContent = n > 0 ? String(n) : '';
+    });
+    $('#ts-bulk-save')?.addEventListener('click', () => this.saveBulkTokens());
+
     this.contentArea.querySelectorAll('[data-toggle]').forEach(el => {
       el.addEventListener('click', () => {
         const key = el.dataset.toggle;
@@ -3727,6 +3769,31 @@ export class TrueStudioManager {
       this.render();
     } catch (e) {
       showNotification(e.message || 'Save failed', 'error');
+    }
+  }
+
+  async saveBulkTokens() {
+    const tokens = this.bulkTokensText
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 10);
+    if (tokens.length === 0) {
+      showNotification('لا توجد توكنات صالحة', 'error');
+      return;
+    }
+    try {
+      const r = await window.electronAPI.tsSaveBulkTokens(tokens);
+      if (!r.success) throw new Error(r.error || 'Save failed');
+      const first = r.added[0];
+      const last  = r.added[r.added.length - 1];
+      const msg = t('ts.bulk_tokens_saved').replace('{n}', r.count) +
+                  ` (${first.email}–${last.email})`;
+      showNotification(msg, 'success');
+      this.bulkTokensText = '';
+      await this.refresh();
+      this.render();
+    } catch (e) {
+      showNotification(e.message || 'فشل الحفظ', 'error');
     }
   }
 

@@ -82,6 +82,7 @@ function ensureData() {
     changed = true;
   }
   if (!d.tsCaptcha || typeof d.tsCaptcha !== 'object') { d.tsCaptcha = {}; changed = true; }
+  if (typeof d.tsBulkTokenCounter !== 'number') { d.tsBulkTokenCounter = 0; changed = true; }
   if (changed) dataStore.touch();
   return d;
 }
@@ -1044,6 +1045,34 @@ const ts = require('./lib/trueStudio');
     else if (directToken === '') rec.directToken = '';
     writeData(d);
     ok(res, { account: { email: rec.email, hasPassword: !!rec.password, hasTotp: !!rec.totpSecret, hasDirectToken: !!rec.directToken, addedAt: rec.addedAt } });
+  });
+
+  // ── Bulk token import — one token per line, auto-numbered tok-N@local ──
+  app.post('/api/ts/accounts/bulk-tokens', (req, res) => {
+    const { tokens } = req.body || {};
+    if (!Array.isArray(tokens) || tokens.length === 0)
+      return fail(res, new Error('لا توجد توكنات'));
+    const valid = tokens.map(tk => (typeof tk === 'string' ? tk.trim() : '')).filter(tk => tk.length > 10);
+    if (valid.length === 0)
+      return fail(res, new Error('لا توجد توكنات صالحة'));
+    const d = ensureData();
+    if (!Array.isArray(d.tsAccounts)) d.tsAccounts = [];
+    if (typeof d.tsBulkTokenCounter !== 'number') d.tsBulkTokenCounter = 0;
+    const added = [];
+    for (const rawToken of valid) {
+      d.tsBulkTokenCounter += 1;
+      const email = `tok-${d.tsBulkTokenCounter}@local`;
+      let rec = tsFindAccount(email);
+      if (!rec) {
+        rec = { email, password: '', totpSecret: '', directToken: '', addedAt: Date.now() };
+        d.tsAccounts.push(rec);
+      }
+      rec.directToken = encrypt(rawToken);
+      rec.addedAt = Date.now();
+      added.push({ email, num: d.tsBulkTokenCounter });
+    }
+    writeData(d);
+    ok(res, { added, count: added.length });
   });
 
   app.delete('/api/ts/accounts/:email', (req, res) => {
