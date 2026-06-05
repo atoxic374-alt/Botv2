@@ -2765,25 +2765,49 @@ const ts = require('./lib/trueStudio');
               const _isRateLimit = isRateLimitedError(err);
               const _isTimeout   = err?.code === 'OP_TIMEOUT';
 
-              // ── Shared helper: switch account (or restart session) then retry ─
-              // Returns true when the retry succeeded, false otherwise.
+              // ── Shared helper: switch account → FRESH SESSION → retry ──────────
+              // After any error we don't do a "hot retry" on whatever state the
+              // session is in.  Instead we:
+              //   1. Switch to the next account (or rebuild current one if none left)
+              //   2. Open a completely fresh portal context — navigate to the
+              //      developer portal and list applications exactly like the session
+              //      init does at the top of createBots.  This guarantees the new
+              //      account starts from a known-clean state, not a leftover context
+              //      that may already be flagged by Discord.
+              //   3. Only then create the bot.
               const _switchAndRetry = async (reason) => {
                 const switched = await switchToNextAccount();
                 if (!switched) {
-                  // No available account — restart session on same account
-                  tsLog('warn', `لا يوجد حساب بديل (${reason}) — إعادة تشغيل الجلسة على ${currentEmail}…`);
-                  await tsSleep(20_000);
+                  // No usable sibling account — rebuild current session from scratch.
+                  tsLog('warn', `لا يوجد حساب بديل (${reason}) — إعادة بناء الجلسة على ${currentEmail} من الصفر…`);
+                  await tsSleep(15_000);
                   try {
                     const _rc = accountPool.find(a => (a.email || '').toLowerCase() === currentEmail) || creds;
                     const _fx = await buildAccountCtx(_rc);
                     token = _fx.token; client = _fx.client; mfaToken = _fx.mfaToken;
                     netOpts = _fx.netOpts; rateLimiter = _fx.rateLimiter;
-                    tsLog('success', `✓ جلسة جديدة على ${currentEmail}`);
+                    tsLog('success', `✓ جلسة مُعاد بناؤها على ${currentEmail}`);
                   } catch (_re) {
-                    tsLog('error', 'فشل إعادة الجلسة: ' + (_re?.message || _re));
+                    tsLog('error', 'فشل إعادة بناء الجلسة: ' + (_re?.message || _re));
                     return false;
                   }
                 }
+
+                // ── Fresh portal context (step 2) ──────────────────────────────
+                // Replicate the same warm-up that runs at the very start of the
+                // createBots block so every retry begins from a clean slate.
+                try {
+                  tsLog('info', `🔄 جلسة نظيفة على ${currentEmail} (${reason}) — تهيئة Developer Portal…`);
+                  await ts.navigateTo({ client, page: 'https://discord.com/developers/applications' });
+                  await ts.humanDelay(900, 1800, speedFactor);
+                  try { await ts.listApplications({ token, netOpts }); } catch (_) {}
+                  await ts.humanDelay(700, 1400, speedFactor);
+                  tsLog('info', `✓ Developer Portal جاهز على ${currentEmail} — بدء إنشاء ${slot.name}`);
+                } catch (_fe) {
+                  tsLog('warn', `تعذر تهيئة Portal (${reason}): ` + (_fe.message || _fe));
+                }
+
+                // ── Retry (step 3) ─────────────────────────────────────────────
                 try {
                   const _rs = Date.now();
                   const { appPayload: rApp, botToken: rTok } = await createOneBotAsync(
@@ -2903,6 +2927,17 @@ const ts = require('./lib/trueStudio');
                   }
                 }
                 if (_retryAllowed) {
+                  // Fresh portal context before rate-limit retry (same logic as _switchAndRetry)
+                  try {
+                    tsLog('info', `🔄 جلسة نظيفة على ${currentEmail} (rate-limit) — تهيئة Developer Portal…`);
+                    await ts.navigateTo({ client, page: 'https://discord.com/developers/applications' });
+                    await ts.humanDelay(900, 1800, speedFactor);
+                    try { await ts.listApplications({ token, netOpts }); } catch (_) {}
+                    await ts.humanDelay(700, 1400, speedFactor);
+                    tsLog('info', `✓ Developer Portal جاهز على ${currentEmail} — بدء إنشاء ${slot.name}`);
+                  } catch (_fe) {
+                    tsLog('warn', `تعذر تهيئة Portal (rate-limit): ` + (_fe.message || _fe));
+                  }
                   try {
                     const _retryStart = Date.now();
                     const { appPayload: rApp, botToken: rTok } = await createOneBotAsync(slot.botIndex, slot.num, slot.name, teamIdSnapshot);
