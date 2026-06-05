@@ -39,6 +39,7 @@ export class TrueStudioManager {
         protocol:     'http', // 'http' (port 33335) | 'socks5h' (port 22228)
       },
       batchSize: 1,
+      sessionBudget: 0,
     };
     this.sse = null;
     this._countdownTimer = null;
@@ -488,6 +489,13 @@ export class TrueStudioManager {
               value="${this.form.waitMinutes}"
               ${(!this.form.rules.createBots && !this.form.rules.createTeams) ? 'disabled' : ''} />
           </div>
+          <div class="ts-field" style="margin-top:4px;">
+            <div class="ts-field-label">${t('ts.session_budget_label')}</div>
+            <input type="number" id="ts-session-budget" class="ts-input numeric" min="0" max="500"
+              value="${this.form.sessionBudget}"
+              title="${escapeAttr(t('ts.session_budget_hint'))}" />
+            <div class="ts-field-hint">${t('ts.session_budget_hint')}</div>
+          </div>
           ${this._renderAdvancedOptions()}
         </div>
 
@@ -868,12 +876,13 @@ export class TrueStudioManager {
 
   _renderBulkTokenCard() {
     const lines = this.bulkTokensText.split('\n').map(l => l.trim()).filter(l => l.length > 10);
-    const n = lines.length;
+    const pending = lines.length;
+    const saved = (this.accounts || []).filter(a => /^tok-\d+@local$/.test(a.email || '')).length;
     return `
       <div class="ts-card">
         <div class="ts-card-head">
           <div class="ts-card-title ar">${t('ts.bulk_tokens_title')}</div>
-          ${n > 0 ? `<div class="ts-card-badge" style="background:var(--mint,#7ce0c4);color:#0a0e1a;font-size:11px;padding:2px 9px;border-radius:20px;font-weight:700;">${n}</div>` : ''}
+          ${saved > 0 ? `<div class="ts-card-badge" style="background:var(--mint,#7ce0c4);color:#0a0e1a;font-size:11px;padding:2px 9px;border-radius:20px;font-weight:700;">${saved} محفوظ</div>` : ''}
         </div>
         <div class="ts-field">
           <div class="ts-field-hint">${t('ts.bulk_tokens_hint')}</div>
@@ -883,9 +892,10 @@ export class TrueStudioManager {
             placeholder="${escapeAttr(t('ts.bulk_tokens_ph'))}"
             autocomplete="off" spellcheck="false">${escapeHtml(this.bulkTokensText)}</textarea>
         </div>
-        <div style="display:flex;justify-content:flex-end;margin-top:8px;">
-          <button class="ts-btn mint" id="ts-bulk-save" ${n === 0 ? 'disabled' : ''}>
-            ${t('ts.bulk_tokens_save')}${n > 0 ? ` (${n})` : ''}
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+          ${saved > 0 ? `<button class="ts-btn danger" id="ts-bulk-delete">${t('ts.bulk_tokens_delete')} (${saved})</button>` : ''}
+          <button class="ts-btn mint" id="ts-bulk-save" ${pending === 0 ? 'disabled' : ''}>
+            ${t('ts.bulk_tokens_save')}${pending > 0 ? ` (${pending})` : ''}
           </button>
         </div>
       </div>`;
@@ -3583,10 +3593,12 @@ export class TrueStudioManager {
         btn.disabled = n === 0;
         btn.textContent = t('ts.bulk_tokens_save') + (n > 0 ? ` (${n})` : '');
       }
-      const badge = this.contentArea.querySelector('#ts-bulk-badge');
-      if (badge) badge.textContent = n > 0 ? String(n) : '';
     });
     $('#ts-bulk-save')?.addEventListener('click', () => this.saveBulkTokens());
+    $('#ts-bulk-delete')?.addEventListener('click', () => this.deleteBulkTokens());
+    $('#ts-session-budget')?.addEventListener('input', (e) => {
+      this.form.sessionBudget = Math.max(0, Math.min(500, parseInt(e.target.value) || 0));
+    });
 
     this.contentArea.querySelectorAll('[data-toggle]').forEach(el => {
       el.addEventListener('click', () => {
@@ -3786,14 +3798,31 @@ export class TrueStudioManager {
       if (!r.success) throw new Error(r.error || 'Save failed');
       const first = r.added[0];
       const last  = r.added[r.added.length - 1];
-      const msg = t('ts.bulk_tokens_saved').replace('{n}', r.count) +
-                  ` (${first.email}–${last.email})`;
+      const msg = t('ts.bulk_tokens_saved_range')
+        .replace('{n}', r.count)
+        .replace('{from}', first.email)
+        .replace('{to}', last.email);
       showNotification(msg, 'success');
       this.bulkTokensText = '';
       await this.refresh();
       this.render();
     } catch (e) {
       showNotification(e.message || 'فشل الحفظ', 'error');
+    }
+  }
+
+  async deleteBulkTokens() {
+    const saved = (this.accounts || []).filter(a => /^tok-\d+@local$/.test(a.email || '')).length;
+    if (saved === 0) { showNotification('لا توجد توكنات مرقمة', 'warn'); return; }
+    if (!confirm(`هل أنت متأكد؟ سيتم حذف ${saved} توكن مرقم نهائياً.`)) return;
+    try {
+      const r = await window.electronAPI.tsDeleteBulkTokens();
+      if (!r.success) throw new Error(r.error || 'Delete failed');
+      showNotification(t('ts.bulk_tokens_deleted').replace('{n}', r.removed), 'success');
+      await this.refresh();
+      this.render();
+    } catch (e) {
+      showNotification(e.message || 'فشل الحذف', 'error');
     }
   }
 
@@ -3908,6 +3937,7 @@ export class TrueStudioManager {
         selectedTeamId: this.form.selectedTeamId || '',
         brightData: this.form.brightData || null,
         batchSize: this.form.batchSize || 1,
+        sessionBudget: this.form.sessionBudget || 0,
       });
       showNotification(t('ts.session_started'), 'success');
       sfx.ding?.();

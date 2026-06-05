@@ -1075,6 +1075,17 @@ const ts = require('./lib/trueStudio');
     ok(res, { added, count: added.length });
   });
 
+  // ── Delete all numbered tok-N@local accounts ──
+  app.delete('/api/ts/accounts/bulk-tokens', (req, res) => {
+    const d = ensureData();
+    const before = (d.tsAccounts || []).length;
+    d.tsAccounts = (d.tsAccounts || []).filter(a => !/^tok-\d+@local$/.test((a.email || '').toLowerCase()));
+    d.tsBulkTokenCounter = 0;
+    const removed = before - (d.tsAccounts || []).length;
+    writeData(d);
+    ok(res, { removed });
+  });
+
   app.delete('/api/ts/accounts/:email', (req, res) => {
     const target = String(req.params.email || '').toLowerCase();
     const d = ensureData();
@@ -2146,7 +2157,8 @@ const ts = require('./lib/trueStudio');
         if (ses.current === 'Queued for account') ses.current = '';
         pushTsEvent('ts_progress');
       }
-      return runTsSession({ creds, rules: r, count: n, prefix: pfx, waitMinutes: wait, proxyList, speedFactor, selectedTeamId: selTeamId, brightData: bd, batchSize });
+      const sessionBudget = Math.max(0, parseInt(req.body?.sessionBudget) || 0);
+      return runTsSession({ creds, rules: r, count: n, prefix: pfx, waitMinutes: wait, proxyList, speedFactor, selectedTeamId: selTeamId, brightData: bd, batchSize, sessionBudget });
     }, { label: 'Create bots session' })
       .catch(e => {
         const ses = tsSession();
@@ -2178,7 +2190,7 @@ const ts = require('./lib/trueStudio');
     return `http://${user}:${pass}@${host}:33335`;
   }
 
-  async function runTsSession({ creds, rules, count, prefix, waitMinutes, proxyList = [], speedFactor = 1.0, selectedTeamId, brightData: bd = null, batchSize: requestedBatchSize = 1 }) {
+  async function runTsSession({ creds, rules, count, prefix, waitMinutes, proxyList = [], speedFactor = 1.0, selectedTeamId, brightData: bd = null, batchSize: requestedBatchSize = 1, sessionBudget = 0 }) {
     const s = tsSession();
     try {
       // Reuse the token + warmed client cached by Test/verify so cookies and
@@ -2249,6 +2261,7 @@ const ts = require('./lib/trueStudio');
       // ── Account-switching pool ───────────────────────────────────────────
       // Tracks the currently active TS account email (may change on rate limit).
       let currentEmail = (creds.email || '').toLowerCase();
+      let botsThisAccount = 0; // session-budget: bots created on the current account
       // accountPaused[email] = timestamp until which this account is paused.
       // Share reference with s.pausedAccounts so tsSnapshot() always sees live data.
       const accountPaused = s.pausedAccounts;
@@ -2399,6 +2412,7 @@ const ts = require('./lib/trueStudio');
             token = _ctx.token; client = _ctx.client; mfaToken = _ctx.mfaToken;
             netOpts = _ctx.netOpts; rateLimiter = _ctx.rateLimiter; currentEmail = _ctx.email;
             s.account = currentEmail;
+            botsThisAccount = 0; // reset budget counter on every account switch
             tsLog('success', `✓ تم التبديل إلى: ${currentEmail} — الحساب سليم`);
             pushTsEvent('ts_progress');
             // Warm up dev portal on new account
@@ -2714,7 +2728,7 @@ const ts = require('./lib/trueStudio');
             if (result.status === 'fulfilled') {
               const { appPayload, botToken, durationMs } = result.value;
               s.bots.push({ name: slot.name, appId: appPayload.id, botUserId: appPayload.bot?.id || null, token: botToken });
-              s.done += 1;
+              s.done += 1; botsThisAccount += 1;
               if (rules.linkBots && teamId) teamAppCounts[teamId] = (teamAppCounts[teamId] || 0) + 1;
               const durSec = durationMs ? (durationMs / 1000).toFixed(1) : null;
               const durLabel = durSec ? ` ⚡ ${durSec}s` : '';
@@ -2777,7 +2791,7 @@ const ts = require('./lib/trueStudio');
                   );
                   const rDurMs = Date.now() - _rs;
                   s.bots.push({ name: slot.name, appId: rApp.id, botUserId: rApp.bot?.id || null, token: rTok });
-                  s.done += 1; s.failed -= 1;
+                  s.done += 1; s.failed -= 1; botsThisAccount += 1;
                   if (rules.linkBots && teamId) teamAppCounts[teamId] = (teamAppCounts[teamId] || 0) + 1;
                   tsLog('success', `تم (${reason}/${currentEmail}): ${slot.name} ⚡ ${(rDurMs/1000).toFixed(1)}s`, { durationMs: rDurMs, appId: rApp.id, botName: slot.name });
                   try {
@@ -2894,7 +2908,7 @@ const ts = require('./lib/trueStudio');
                     const { appPayload: rApp, botToken: rTok } = await createOneBotAsync(slot.botIndex, slot.num, slot.name, teamIdSnapshot);
                     const rDurMs = Date.now() - _retryStart;
                     s.bots.push({ name: slot.name, appId: rApp.id, botUserId: rApp.bot?.id || null, token: rTok });
-                    s.done += 1; s.failed -= 1;
+                    s.done += 1; s.failed -= 1; botsThisAccount += 1;
                     if (rules.linkBots && teamId) teamAppCounts[teamId] = (teamAppCounts[teamId] || 0) + 1;
                     tsLog('success', `تم (retry/${currentEmail}): ${slot.name}`, { durationMs: rDurMs, appId: rApp.id, botName: slot.name });
                     try {
@@ -2920,6 +2934,20 @@ const ts = require('./lib/trueStudio');
               }
 
               pushTsEvent('ts_progress');
+            }
+          }
+
+          // ── Session-budget: proactive account rotation ─────────────────────
+          // If sessionBudget > 0 and current account has created ≥ N bots,
+          // rotate NOW before Discord escalates security checks.
+          if (sessionBudget > 0 && botsThisAccount >= sessionBudget && i < count && !s.cancelRequested) {
+            tsLog('info', `⇄ Session budget (${sessionBudget} بوت) اكتمل على ${currentEmail} — تبديل استباقي للحساب…`);
+            const budgetSwitched = await switchToNextAccount(); // resets botsThisAccount on success
+            if (budgetSwitched) {
+              tsLog('success', `✓ تبديل استباقي إلى: ${currentEmail} — يبدأ العداد من صفر`);
+            } else {
+              tsLog('warn', `لا يوجد حساب بديل — مكمل على ${currentEmail} (budget ignored)`);
+              botsThisAccount = 0; // reset anyway so we don't spam the log every bot
             }
           }
 
