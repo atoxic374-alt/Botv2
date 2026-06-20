@@ -385,6 +385,81 @@ const ts = require('./lib/trueStudio');
     return err?.status === 429 || err?.code === 'RATE_LIMITED' || err?.code === 'CLOUDFLARE_BLOCK' || /rate[- ]?limit|429/i.test(err?.message || '');
   }
 
+  // ── Captcha-wall classifier ────────────────────────────────────────────────
+  // A captcha wall means Discord has FLAGGED the account as suspicious.
+  // Solving one captcha won't fix it — the next request will require another.
+  // We detect it from:  1) explicit CAPTCHA_WALL code  2) manual-timeout flag
+  //                     3) CAPTCHA_FAILED after timeout  4) repeated CAPTCHA_REQUIRED
+  function isCaptchaWallError(err) {
+    if (!err) return false;
+    if (err.captchaWall === true) return true;
+    if (err.code === 'CAPTCHA_WALL') return true;
+    const msg = String(err.message || '');
+    return /CAPTCHA_WALL|انتهت مهلة الكابتشا|captcha timed out/i.test(msg);
+  }
+
+  // ── Account Intelligence Engine ────────────────────────────────────────────
+  // Tracks per-account behavior patterns within a session.
+  // Used to detect captcha walls, adapt pacing, and decide when to switch.
+  //
+  // Key insight: If the SAME account hits captcha 2+ times in a row, it is
+  // soft-banned by Discord's anti-abuse system. Solving one captcha won't help —
+  // the next request will demand another. The right move is to switch accounts
+  // or stop, NOT to rebuild the same session.
+  const _acctIntel = new Map();
+
+  function _getAcctIntel(email) {
+    const k = String(email || '').toLowerCase();
+    if (!_acctIntel.has(k)) {
+      _acctIntel.set(k, {
+        captchaStreak:  0,     // consecutive captcha-wall hits
+        totalCaptchas:  0,     // total captchas this session
+        failureStreak:  0,     // consecutive failed creates
+        successStreak:  0,     // consecutive successful creates
+        totalCreated:   0,     // total bots created on this account
+        captchaWall:    false, // true = confirmed captcha-walled
+        slowDown:       false, // true = pace has been deliberately slowed
+      });
+    }
+    return _acctIntel.get(k);
+  }
+
+  function acctOnSuccess(email) {
+    const intel = _getAcctIntel(email);
+    intel.captchaStreak = 0;
+    intel.failureStreak = 0;
+    intel.successStreak++;
+    intel.totalCreated++;
+  }
+
+  function acctOnCaptchaWall(email) {
+    const intel = _getAcctIntel(email);
+    intel.captchaStreak++;
+    intel.totalCaptchas++;
+    intel.failureStreak++;
+    intel.successStreak = 0;
+    if (intel.captchaStreak >= 2) intel.captchaWall = true;
+    return intel;
+  }
+
+  function acctOnError(email) {
+    const intel = _getAcctIntel(email);
+    intel.failureStreak++;
+    intel.successStreak = 0;
+  }
+
+  function acctIsWalled(email) {
+    return _getAcctIntel(String(email || '').toLowerCase()).captchaWall;
+  }
+
+  // Adaptive speed factor: slow down after consecutive failures, speed up after wins
+  function acctAdaptiveSpeed(email, baseSpeed) {
+    const intel = _getAcctIntel(email);
+    if (intel.failureStreak >= 3) return Math.min(baseSpeed * 1.8, 2.0); // slow down
+    if (intel.successStreak >= 5) return Math.max(baseSpeed * 0.85, 0.15); // slight speedup
+    return baseSpeed;
+  }
+
   // Detects Cloudflare IP blocks vs normal Discord 429s.
   // Source: Official Discord docs + discord.food + community research.
   //
@@ -848,10 +923,16 @@ const ts = require('./lib/trueStudio');
       challenge.timer = setTimeout(() => {
         if (s.pendingCaptcha && s.pendingCaptcha.id === id) {
           s.pendingCaptcha = null;
-          tsLog('error', 'انتهت مهلة الكابتشا اليدوية بدون حل');
+          const mins = Math.round(MANUAL_CAPTCHA_TIMEOUT_MS / 60000);
+          tsLog('error', `انتهت مهلة الكابتشا (${mins} دقيقة) — 🧠 الذكاء الاصطناعي: هذا يشير إلى حائط كابتشا على الحساب`);
           pushTsEvent('ts_captcha_timeout', { id });
           pushTsEvent('ts_progress');
-          reject(new Error('Manual captcha timed out (5 min)'));
+          // Throw CAPTCHA_WALL — signals the account is flagged, NOT a one-time captcha.
+          // This lets the creation loop switch accounts instead of rebuilding the same session.
+          const wallErr = new Error(`CAPTCHA_WALL: انتهت مهلة الكابتشا (${mins}د) — الحساب يواجه حائط كابتشا`);
+          wallErr.code = 'CAPTCHA_WALL';
+          wallErr.captchaWall = true;
+          reject(wallErr);
         }
       }, MANUAL_CAPTCHA_TIMEOUT_MS);
       s.pendingCaptcha = challenge;
@@ -873,11 +954,36 @@ const ts = require('./lib/trueStudio');
   // The unified solver passed into every Discord call. Tries the configured
   // provider first (2Captcha or CapSolver), then falls back to manual unless
   // the user explicitly disabled the manual fallback in settings.
-  function buildSolveCaptcha() {
+  //
+  // email (optional): the account that triggered this captcha, used for
+  // Account Intelligence tracking so the creation loop can detect walls.
+  function buildSolveCaptcha(email = null) {
     return async function solveCaptcha({ sitekey, service, rqdata, rqtoken, url, context }) {
       const settings = tsCaptchaSettings();
       const apiKey   = tsCaptchaApiKey();
       const provider = settings.provider || '2captcha';
+
+      // 🧠 AI pre-check: if this account is already confirmed captcha-walled,
+      // skip solving entirely and throw CAPTCHA_WALL immediately.
+      // Trying to solve a wall captcha wastes time — the next request will just
+      // demand another one anyway.
+      if (email && acctIsWalled(email)) {
+        tsLog('error', `🧠 ${email}: حائط كابتشا مؤكد — تخطّي المحاولة فوراً (الحساب مُوسَم من Discord)`);
+        const wallErr = new Error(`CAPTCHA_WALL: الحساب ${email} مُوسَم بحائط كابتشا — تبديل الحساب`);
+        wallErr.code = 'CAPTCHA_WALL';
+        wallErr.captchaWall = true;
+        throw wallErr;
+      }
+
+      // Track this captcha appearance for intelligence
+      if (email) {
+        const intel = acctOnCaptchaWall(email);
+        if (intel.captchaWall) {
+          tsLog('warn', `🧠 ${email}: كابتشا متتالية (${intel.captchaStreak}) — Discord يوسم هذا الحساب كمشبوه`);
+        } else {
+          tsLog('info', `🧠 ${email}: كابتشا #${intel.totalCaptchas} (سلسلة: ${intel.captchaStreak})`);
+        }
+      }
 
       if (apiKey && provider === 'capsolver') {
         try {
@@ -2250,8 +2356,10 @@ const ts = require('./lib/trueStudio');
       }
       let rateLimiter = makeTsRateLimiter('bot-create', null, { minimumGapMs: 800, account: creds.email });
       // Build netOpts ONCE per session, carrying the warmed client + speedFactor.
+      // Pass email to buildSolveCaptcha so the Account Intelligence Engine
+      // can track captcha events per-account and detect walls automatically.
       let netOpts = {
-        solveCaptcha: buildSolveCaptcha(),
+        solveCaptcha: buildSolveCaptcha(creds.email),
         client,
         totpSecret: creds.totpSecret || undefined,
         password: creds.password || undefined,
@@ -2329,7 +2437,7 @@ const ts = require('./lib/trueStudio');
         }
         const _rl = makeTsRateLimiter('bot-create', null, { minimumGapMs: 800, account: _email });
         const _no = {
-          solveCaptcha: buildSolveCaptcha(),
+          solveCaptcha: buildSolveCaptcha(_email),
           client: _client,
           totpSecret: acct.totpSecret || undefined,
           password: acct.password || undefined,
@@ -2720,6 +2828,19 @@ const ts = require('./lib/trueStudio');
             : batchSlots.map(b => b.name).join(' + ');
           pushTsEvent('ts_progress');
 
+          // In sequential mode: simulate realistic human behaviour before creating
+          // each bot. This reduces Discord's suspicion score.
+          // In parallel mode: skip pre-creation simulation (it would add too much
+          // per-slot delay and isn't needed when speed is the priority).
+          if (!useParallelMode) {
+            try {
+              const adaptedSpeed = acctAdaptiveSpeed(currentEmail, speedFactor);
+              await ts.simulatePreCreation({ token, client, netOpts, speedFactor: adaptedSpeed });
+            } catch (_spe) {
+              tsLog('warn', 'تعذر تنفيذ محاكاة ما قبل الإنشاء: ' + (_spe.message || _spe));
+            }
+          }
+
           // Launch all bots in this batch concurrently.
           // Stagger starts by 200ms per slot so concurrent requests don't all
           // hit the same API bucket at the exact same millisecond — this is the
@@ -2750,6 +2871,8 @@ const ts = require('./lib/trueStudio');
               s.bots.push({ name: slot.name, appId: appPayload.id, botUserId: appPayload.bot?.id || null, token: botToken });
               s.done += 1; botsThisAccount += 1;
               if (rules.linkBots && teamId) teamAppCounts[teamId] = (teamAppCounts[teamId] || 0) + 1;
+              // 🧠 Intelligence: reset failure streak on success
+              acctOnSuccess(currentEmail);
               const durSec = durationMs ? (durationMs / 1000).toFixed(1) : null;
               const durLabel = durSec ? ` ⚡ ${durSec}s` : '';
               tsLog('success', 'تم: ' + slot.name + ' · token=' + botToken.slice(0, 12) + '…' + durLabel, { durationMs, appId: appPayload.id, botName: slot.name });
@@ -2982,8 +3105,57 @@ const ts = require('./lib/trueStudio');
                   }
                 }
 
-              // ── 4) Any other unexpected error → try switching account once ───
+              // ── 4) Captcha wall — account flagged by Discord anti-abuse ─────
+              // A captcha wall is NOT a normal captcha. It means Discord requires a
+              // captcha on EVERY request from this account. Solving one won't fix it —
+              // the next request will demand another. We detect it from:
+              //   a) isCaptchaWallError()  b) two+ consecutive captcha hits on same account
+              //
+              // Strategy: pause the account for 30 min, switch away immediately.
+              // If no other account is available AND all accounts in the pool are also
+              // walled, stop the session (phantom creation is useless and harmful).
+              } else if (isCaptchaWallError(err) || acctIsWalled(currentEmail)) {
+                const _intel = _getAcctIntel(currentEmail);
+                tsLog('error',
+                  `🧠 حائط كابتشا مؤكد على [${currentEmail}] — Discord وسّم هذا الحساب كمشبوه ` +
+                  `(${_intel.captchaStreak} كابتشا متتالية, ${_intel.totalCaptchas} مجموع)`
+                );
+                // Pause flagged account for 30 minutes
+                accountPaused[currentEmail] = Date.now() + 30 * 60 * 1000;
+                pushTsEvent('ts_progress', {
+                  captchaWall: true,
+                  walledAccount: currentEmail,
+                  message: `حائط كابتشا: ${currentEmail} مُوسَم — تبديل الحساب`,
+                });
+
+                // Check if ALL accounts in the pool are walled → stop to avoid phantom loop
+                const _allWalled = accountPool.every(a => acctIsWalled((a.email || '').toLowerCase()));
+                if (_allWalled && accountPool.length > 0) {
+                  tsLog('error',
+                    `🛑 جميع الحسابات (${accountPool.length}) مُوسَمة بحائط كابتشا — ` +
+                    `إيقاف الجلسة لتفادي الإنشاء الوهمي (حلقة لانهائية من الكابتشا)`
+                  );
+                  s.cancelRequested = true;
+                  break;
+                }
+
+                const wallSwitched = await switchToNextAccount();
+                if (!wallSwitched) {
+                  tsLog('warn', `لا يوجد حساب بديل نظيف — إيقاف الجلسة مؤقتاً (${Math.round(30 * 60)}s)`);
+                  s.state = 'waiting'; s.waitUntilTs = Date.now() + 30 * 60 * 1000; s.waitTotalMs = 30 * 60 * 1000;
+                  pushTsEvent('ts_progress');
+                  await tsSleep(30 * 60 * 1000);
+                  s.state = 'running'; s.waitUntilTs = 0; s.waitTotalMs = 0;
+                  pushTsEvent('ts_progress');
+                } else {
+                  // Retry on the new clean account
+                  tsLog('info', `🔄 إعادة محاولة ${slot.name} على الحساب النظيف: ${currentEmail}`);
+                  await _switchAndRetry('captcha-wall-switch');
+                }
+
+              // ── 5) Any other unexpected error → try switching account once ───
               } else {
+                acctOnError(currentEmail);
                 tsLog('warn', `⚡ خطأ غير متوقع على ${slot.name} — محاولة التبديل للحساب البديل…`);
                 await _switchAndRetry('generic-error');
               }
