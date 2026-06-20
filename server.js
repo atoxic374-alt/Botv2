@@ -7,13 +7,19 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const { scopedStore, currentUserId, userCtx, SYSTEM_UID } = require('./lib/userScope');
+
+function withUser(userId, fn) {
+  return userCtx.run({ userId }, fn);
+}
 const { encrypt, tryDecrypt } = require('./lib/crypto');
 const { testProxy } = require('./lib/proxy');
 
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 5000);
-const BUILD_STAMP = String(Date.now());
+const BUILD_STAMP = (() => {
+  try { return String(fs.statSync(__filename).mtimeMs | 0); } catch { return String(Date.now()); }
+})();
 
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -71,7 +77,7 @@ app.use(express.static(path.join(__dirname), {
 const botTokensStore = scopedStore('bot_tokens.json', []);
 const dataStore = scopedStore('app_data.json', {});
 function readData() { return dataStore.read(); }
-function writeData(_d) { dataStore.touch(); }
+function writeData(_d) { dataStore.touch(); dataStore.flushSync(); }
 function ensureData() {
   const d = dataStore.read();
   let changed = false;
@@ -1700,6 +1706,7 @@ const ts = require('./lib/trueStudio');
     const d = ensureData();
     d.tsProxyUrl = typeof proxyUrl === 'string' ? proxyUrl.trim() : '';
     dataStore.touch();
+    dataStore.flushSync();
     ok(res, { proxyUrl: d.tsProxyUrl });
   });
 
