@@ -1690,6 +1690,19 @@ const ts = require('./lib/trueStudio');
     }
   });
 
+  // ── Proxy save / load ────────────────────────────────────────────────────
+  app.get('/api/ts/proxy', (req, res) => {
+    const d = ensureData();
+    ok(res, { proxyUrl: d.tsProxyUrl || '' });
+  });
+  app.post('/api/ts/proxy', (req, res) => {
+    const { proxyUrl } = req.body || {};
+    const d = ensureData();
+    d.tsProxyUrl = typeof proxyUrl === 'string' ? proxyUrl.trim() : '';
+    dataStore.touch();
+    ok(res, { proxyUrl: d.tsProxyUrl });
+  });
+
   // ── Proxy verification ──────────────────────────────────────────────────
   // Tests that a proxy URL is reachable and returns the egress IP.
   app.post('/api/ts/proxy-verify', async (req, res) => {

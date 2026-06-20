@@ -77,6 +77,7 @@ export class TrueStudioManager {
       await this._loadBotTokens();
       await this._loadPfp();
       await this._loadAutoIntents();
+      await this._loadProxy();
       this.openSSE();
       this._startCountdownTicker();
       this._inited = true;
@@ -84,10 +85,20 @@ export class TrueStudioManager {
       await this.refresh();
       await this._loadBotTokens();
       await this._loadPfp();
+      await this._loadProxy();
     }
     this.render();
     // If a captcha is already pending when this view opens, surface the modal.
     this._maybeOpenCaptchaModal();
+  }
+
+  async _loadProxy() {
+    try {
+      const r = await window.electronAPI.tsGetProxy();
+      if (r && typeof r.proxyUrl === 'string' && r.proxyUrl) {
+        this.form.proxyUrl = r.proxyUrl;
+      }
+    } catch (e) { /* non-fatal */ }
   }
 
   async _loadCaptchaSettings() {
@@ -3717,6 +3728,11 @@ export class TrueStudioManager {
       try {
         const r = await window.electronAPI.tsVerifyProxy(url);
         this._proxyTestResult = r?.ok ? { ok: true, ip: r.ip } : { ok: false, error: r?.error || 'فشل' };
+        if (r?.ok && !bd?.enabled) {
+          // حفظ البروكسي تلقائياً بعد نجاح الاختبار
+          try { await window.electronAPI.tsSaveProxy(this.form.proxyUrl || ''); } catch (_) {}
+          showNotification('✓ البروكسي يعمل وتم حفظه', 'success');
+        }
       } catch (e) {
         this._proxyTestResult = { ok: false, error: e.message || 'فشل الاتصال' };
       } finally {
