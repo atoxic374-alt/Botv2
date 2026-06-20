@@ -68,6 +68,51 @@ export class TrueStudioManager {
     this._autoIntents = false;        // auto-enable intents when creating new bots
     this.pfp = { avatar: null, banner: null, updatedAt: 0 };
     this.bulkTokensText = '';         // raw textarea content for bulk token import
+    this._loadFormPrefs();
+  }
+
+  _saveFormPrefs() {
+    try {
+      const prefs = {
+        rules:         this.form.rules,
+        count:         this.form.count,
+        prefix:        this.form.prefix,
+        waitMinutes:   this.form.waitMinutes,
+        speed:         this.form.speed,
+        batchSize:     this.form.batchSize,
+        sessionBudget: this.form.sessionBudget,
+        brightData:    this.form.brightData,
+      };
+      localStorage.setItem('ts_form_prefs', JSON.stringify(prefs));
+    } catch (_) {}
+  }
+
+  _loadFormPrefs() {
+    try {
+      const raw = localStorage.getItem('ts_form_prefs');
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (p.rules && typeof p.rules === 'object') {
+        this.form.rules.createTeams = !!p.rules.createTeams;
+        this.form.rules.createBots  = p.rules.createBots !== false;
+        this.form.rules.linkBots    = !!p.rules.linkBots;
+      }
+      if (typeof p.count === 'number')         this.form.count = Math.max(1, Math.min(50, p.count));
+      if (typeof p.prefix === 'string')        this.form.prefix = p.prefix;
+      if (typeof p.waitMinutes === 'number')   this.form.waitMinutes = Math.max(0, Math.min(60, p.waitMinutes));
+      if (typeof p.speed === 'string')         this.form.speed = p.speed;
+      if (typeof p.batchSize === 'number')     this.form.batchSize = Math.max(1, Math.min(5, p.batchSize));
+      if (typeof p.sessionBudget === 'number') this.form.sessionBudget = Math.max(0, p.sessionBudget);
+      if (p.brightData && typeof p.brightData === 'object') {
+        this.form.brightData = {
+          enabled:      !!p.brightData.enabled,
+          customerId:   String(p.brightData.customerId || ''),
+          zoneName:     String(p.brightData.zoneName || ''),
+          zonePassword: String(p.brightData.zonePassword || ''),
+          protocol:     p.brightData.protocol === 'socks5h' ? 'socks5h' : 'http',
+        };
+      }
+    } catch (_) {}
   }
 
   async init() {
@@ -3609,6 +3654,7 @@ export class TrueStudioManager {
     $('#ts-bulk-delete')?.addEventListener('click', () => this.deleteBulkTokens());
     $('#ts-session-budget')?.addEventListener('input', (e) => {
       this.form.sessionBudget = Math.max(0, Math.min(500, parseInt(e.target.value) || 0));
+      this._saveFormPrefs();
     });
 
     this.contentArea.querySelectorAll('[data-toggle]').forEach(el => {
@@ -3619,15 +3665,18 @@ export class TrueStudioManager {
         el.classList.toggle('on');
         el.setAttribute('aria-checked', String(this.form.rules[key]));
         this._updateRuleFieldStates();
+        this._saveFormPrefs();
       });
     });
 
     $('#ts-count')?.addEventListener('input', (e) => {
       this.form.count = Math.max(1, Math.min(50, parseInt(e.target.value) || 1));
+      this._saveFormPrefs();
     });
-    $('#ts-prefix')?.addEventListener('input', (e) => this.form.prefix = e.target.value);
+    $('#ts-prefix')?.addEventListener('input', (e) => { this.form.prefix = e.target.value; this._saveFormPrefs(); });
     $('#ts-wait')?.addEventListener('input', (e) => {
       this.form.waitMinutes = Math.max(0, Math.min(60, parseInt(e.target.value) || 0));
+      this._saveFormPrefs();
     });
 
     // Speed pills (radio buttons)
@@ -3637,6 +3686,7 @@ export class TrueStudioManager {
         this.contentArea.querySelectorAll('.ts-speed-pill').forEach(p => {
           p.classList.toggle('active', p.querySelector('input')?.value === this.form.speed);
         });
+        this._saveFormPrefs();
       });
     });
 
@@ -3651,6 +3701,7 @@ export class TrueStudioManager {
       if (!this.form.brightData) this.form.brightData = { enabled: false, customerId: '', zoneName: '', zonePassword: '', protocol: 'http' };
       this.form.brightData.enabled = !this.form.brightData.enabled;
       this._proxyTestResult = null;
+      this._saveFormPrefs();
       this.render();
     });
 
@@ -3659,25 +3710,30 @@ export class TrueStudioManager {
       if (!this.form.brightData) return;
       this.form.brightData.customerId = e.target.value.trim();
       this._proxyTestResult = null;
+      this._saveFormPrefs();
     });
     $('#ts-bd-zone')?.addEventListener('input', (e) => {
       if (!this.form.brightData) return;
       this.form.brightData.zoneName = e.target.value.trim();
       this._proxyTestResult = null;
+      this._saveFormPrefs();
     });
     $('#ts-bd-pass')?.addEventListener('input', (e) => {
       if (!this.form.brightData) return;
       this.form.brightData.zonePassword = e.target.value;
       this._proxyTestResult = null;
+      this._saveFormPrefs();
     });
     $('#ts-bd-proto')?.addEventListener('change', (e) => {
       if (!this.form.brightData) return;
       this.form.brightData.protocol = e.target.value || 'http';
+      this._saveFormPrefs();
     });
 
     // Batch size selector (shown when IP rotation is active)
     $('#ts-batch-size')?.addEventListener('change', (e) => {
       this.form.batchSize = Math.max(1, Math.min(5, parseInt(e.target.value) || 1));
+      this._saveFormPrefs();
     });
 
     // ── Quick Setup toggle button ────────────────────────────────────
@@ -3699,6 +3755,7 @@ export class TrueStudioManager {
         this.form.speed     = preset.speed;
         this._bdPreset      = preset.id;
         this._quickSetupOpen = false;
+        this._saveFormPrefs();
         this.render();
         showNotification(`تم تطبيق إعدادات ${preset.name} — أدخل Zone Name وPassword`, 'success');
       });
