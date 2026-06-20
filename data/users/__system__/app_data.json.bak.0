@@ -1,10 +1,44 @@
 {
-  "tsAccounts": [],
+  "tsAccounts": [
+    {
+      "email": "ahmed827eu@gmail.com",
+      "password": "",
+      "totpSecret": "",
+      "directToken": "v1:ecd1b06fb27254509c3de204:1d8178033c9b4810d041ea94a9d663a3:a3b48284af585fad1578ec5424e692412939faa528ff8f2d0891bd903257ce16b10760d0fa1b55909dcc6bdc39f785cbe6daf1df0ebe6041cbfe3f7dfa550d2fcddc9cd5e83453c4",
+      "addedAt": 1781957210076,
+      "verify": {
+        "ok": true,
+        "status": "verified",
+        "message": "Account verified — no active rate-limit/lock detected",
+        "mfa": false,
+        "username": "wqwqwqqw1_24761",
+        "userId": "1484752387909488733",
+        "at": 1781957251336
+      }
+    },
+    {
+      "email": "berokhalil77@gmail.com",
+      "password": "v1:b2a5375537bb2c20a0c9ad4c:367742604e778b4794b9ac39aae9100f:226805fdeea1290e866c",
+      "totpSecret": "",
+      "directToken": "v1:1ac8de8f426be62ffde08e0e:879a9d9e631420cb24535b5a9ddcee0d:786871883c906ab1b554464aca8fd3be054fba482ce6fd9ad39cad1047048711c9fc15f40c4ee83222d0a7365d27c4552c51bf7f7c14bc20c58752c969bc0a0070d73f48c678099d",
+      "addedAt": 1781957288621,
+      "verify": {
+        "ok": false,
+        "status": "token_unusable",
+        "message": "Login OK but /users/@me returned 401",
+        "mfa": false,
+        "username": "",
+        "userId": "",
+        "at": 1781957309686
+      }
+    }
+  ],
   "tsLastNumber": 0,
   "tsPfp": {
     "avatar": null,
     "banner": null,
     "updatedAt": 0
   },
-  "tsCaptcha": {}
+  "tsCaptcha": {},
+  "tsBulkTokenCounter": 0
 }
